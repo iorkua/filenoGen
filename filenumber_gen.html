@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FileNos Multi-Sheet Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <h1>FileNos Multi-Sheet Generator (1981-2025)</h1>
+    <p>This will generate 12 sheets with 450,000 records each</p>
+    <button onclick="generateAndDownloadFileNos()">Generate Multi-Sheet Excel File</button>
+    
+    <script>
+        // Define all the file formats
+        const fileFormats = [
+            { prefix: 'RES', name: 'RES' },
+            { prefix: 'COM', name: 'COM' },
+            { prefix: 'AG', name: 'AG' },
+            { prefix: 'RES-RC', name: 'RES-RC' },
+            { prefix: 'COM-RC', name: 'COM-RC' },
+            { prefix: 'AG-RC', name: 'AG-RC' },
+            { prefix: 'CON-RES', name: 'CON-RES' },
+            { prefix: 'CON-COM', name: 'CON-COM' },
+            { prefix: 'CON-AG', name: 'CON-AG' },
+            { prefix: 'CON-RES-RC', name: 'CON-RES-RC' },
+            { prefix: 'CON-COM-RC', name: 'CON-COM-RC' },
+            { prefix: 'CON-AG-RC', name: 'CON-AG-RC' }
+        ];
+
+        function generateFileNosForFormat(prefix) {
+            const years = Array.from({length: 45}, (_, i) => 1981 + i);
+            const numbers = Array.from({length: 10000}, (_, i) => i + 1);
+            
+            const fileNos = [];
+            
+            years.forEach(year => {
+                numbers.forEach(number => {
+                    fileNos.push({
+                        Year: year,
+                        Number: number,
+                        FileNo: `${prefix}-${year}-${number}`
+                    });
+                });
+            });
+            
+            return fileNos;
+        }
+
+        // Function to convert array to worksheet
+        function arrayToWorksheet(data) {
+            const ws = XLSX.utils.json_to_sheet(data);
+            return ws;
+        }
+
+        // Function to download Excel file with multiple sheets
+        function downloadExcel(workbook, filename) {
+            XLSX.writeFile(workbook, filename);
+        }
+
+        // Main function to generate and download
+        function generateAndDownloadFileNos() {
+            console.log('Generating Multi-Sheet FileNos... This may take a moment...');
+            
+            // Create a new workbook
+            const workbook = XLSX.utils.book_new();
+            
+            let totalRecords = 0;
+            
+            // Generate data for each format and add as separate sheet
+            fileFormats.forEach(format => {
+                console.log(`Generating sheet for ${format.name}...`);
+                const fileNos = generateFileNosForFormat(format.prefix);
+                const worksheet = arrayToWorksheet(fileNos);
+                
+                // Add worksheet to workbook
+                XLSX.utils.book_append_sheet(workbook, worksheet, format.name);
+                
+                totalRecords += fileNos.length;
+            });
+            
+            // Calculate totals
+            const totalYears = 45;
+            const totalNumbers = 10000;
+            const totalSheets = fileFormats.length;
+            
+            console.log('Generation Complete!');
+            console.log(`Total sheets: ${totalSheets}`);
+            console.log(`Years per sheet: 1981-2025 (${totalYears} years)`);
+            console.log(`Numbers per sheet: 1-10000 (${totalNumbers} per year)`);
+            console.log(`Records per sheet: ${(totalYears * totalNumbers).toLocaleString()}`);
+            console.log(`Total records: ${totalRecords.toLocaleString()}`);
+            
+            // Download the file
+            downloadExcel(workbook, 'MultiSheet_FileNos_1981_2025.xlsx');
+            
+            // Show success message
+            alert(`Multi-sheet Excel file generated successfully!\n\nSaved as: MultiSheet_FileNos_1981_2025.xlsx\n\nSheets created:\n- ${fileFormats.map(f => f.name).join('\n- ')}\n\nTotal records: ${totalRecords.toLocaleString()}`);
+        }
+
+        // Show available formats
+        console.log('Available FileNo Formats:');
+        fileFormats.forEach(format => {
+            console.log(`- ${format.name}: ${format.prefix}-YYYY-NNNN`);
+        });
+    </script>
+</body>
+</html>
