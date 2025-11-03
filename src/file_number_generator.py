@@ -4,6 +4,8 @@ Generates file numbers for all 12 categories with proper registry assignment
 """
 
 import os
+import random
+import string
 from datetime import datetime
 from typing import List, Dict, Any, Generator
 import logging
@@ -58,22 +60,36 @@ class FileNumberGenerator:
             file_number: The complete file number
             year: The year from the file number
         Returns:
-            Registry assignment (Registry 1, Registry 2, or Registry 3)
+            Registry assignment (1, 2, or 3)
         """
         # Registry 3: Any file number containing "CON" (overrides year rules)
         if 'CON' in file_number:
-            return 'Registry 3'
+            return '3'
         
         # Registry 1: Years 1981-1991
         if 1981 <= year <= 1991:
-            return 'Registry 1'
+            return '1'
         
         # Registry 2: Years 1992-2025
         if 1992 <= year <= 2025:
-            return 'Registry 2'
+            return '2'
         
         # Default fallback
-        return 'Registry 2'
+        return '2'
+    
+    def generate_tracking_id(self) -> str:
+        """
+        Generate a unique tracking ID in the format TRK-YZ9C71TL-7VHX8
+        Returns:
+            Tracking ID string
+        """
+        # Generate 8-character alphanumeric string (first part)
+        part1 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        
+        # Generate 5-character alphanumeric string (second part)  
+        part2 = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+        
+        return f"TRK-{part1}-{part2}"
     
     def generate_file_numbers(self, categories: List[str] = None, max_per_category: int = None) -> Generator[Dict[str, Any], None, None]:
         """
@@ -120,6 +136,7 @@ class FileNumberGenerator:
                     # Extract land use and assign registry
                     land_use = self.extract_land_use(file_number)
                     registry = self.assign_registry(file_number, year)
+                    tracking_id = self.generate_tracking_id()
                     
                     yield {
                         'awaiting_fileno': file_number,
@@ -132,7 +149,8 @@ class FileNumberGenerator:
                         'mls_fileno': None,
                         'mapping': 0,
                         'group': group_number,
-                        'sys_batch_no': batch_number
+                        'sys_batch_no': batch_number,
+                        'tracking_id': tracking_id
                     }
                     
                     # Break if we've reached the category limit

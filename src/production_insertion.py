@@ -154,15 +154,16 @@ class ProductionInserter:
                     record['mls_fileno'],
                     record['mapping'],
                     record['group'],
-                    record['sys_batch_no']
+                    record['sys_batch_no'],
+                    record['tracking_id']
                 ))
             
             # Execute batch insert
             insert_sql = """
                 INSERT INTO [dbo].[grouping] 
                 ([awaiting_fileno], [created_by], [number], [year], [landuse], 
-                 [created_at], [registry], [mls_fileno], [mapping], [group], [sys_batch_no])
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 [created_at], [registry], [mls_fileno], [mapping], [group], [sys_batch_no], [tracking_id])
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             
             cursor.executemany(insert_sql, batch_data)
