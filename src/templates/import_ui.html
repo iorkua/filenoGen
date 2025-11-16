@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV File Number Importer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="file"],
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus,
+        input[type="file"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #e0e0e0;
+        }
+
+        .btn-secondary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .progress-section {
+            display: none;
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #f0f0f0;
+        }
+
+        .progress-section.active {
+            display: block;
+        }
+
+        .progress-header {
+            margin-bottom: 15px;
+        }
+
+        .progress-header h3 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .progress-bar-container {
+            background: #f0f0f0;
+            border-radius: 6px;
+            height: 8px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .progress-bar {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 6px;
+        }
+
+        .progress-percent {
+            text-align: right;
+            color: #667eea;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 15px;
+        }
+
+        .stat-box {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            color: #333;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .log-section {
+            margin-top: 20px;
+        }
+
+        .log-header {
+            color: #333;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .log-container {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            height: 200px;
+            overflow-y: auto;
+            padding: 12px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            color: #333;
+            margin-bottom: 4px;
+            word-break: break-word;
+        }
+
+        .log-entry.info {
+            color: #667eea;
+        }
+
+        .log-entry.success {
+            color: #27ae60;
+        }
+
+        .log-entry.error {
+            color: #e74c3c;
+        }
+
+        .log-entry.warning {
+            color: #f39c12;
+        }
+
+        .log-entry.progress {
+            color: #16a085;
+            font-weight: 500;
+        }
+
+        .status-message {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            text-align: center;
+            display: none;
+        }
+
+        .status-message.active {
+            display: block;
+        }
+
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status-message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            background: currentColor;
+            border-radius: 50%;
+            animation: spinner 1.2s infinite;
+            margin-right: 6px;
+        }
+
+        @keyframes spinner {
+            0%, 80%, 100% {
+                opacity: 0.3;
+            }
+            40% {
+                opacity: 1;
+            }
+        }
+
+        .status-inline {
+            display: inline-flex;
+            align-items: center;
+            color: #667eea;
+            font-size: 13px;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+
+            .header h1 {
+                font-size: 22px;
+            }
+
+            .stats {
+                grid-template-columns: 1fr;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .connection-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .connection-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status disconnected" id="connectionStatus">
+        <div class="status-dot"></div>
+        <span id="connectionText">Disconnected</span>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>📊 File Number Importer</h1>
+            <p>Fast CSV import with real-time progress tracking</p>
+        </div>
+
+        <form id="importForm">
+            <div class="form-group">
+                <label for="csvFile">CSV File Path</label>
+                <input type="text" id="csvFile" name="csvFile" value="FileNos_PRO.csv" placeholder="e.g., FileNos_PRO.csv or /path/to/file.csv">
+            </div>
+
+            <div class="form-group">
+                <label for="controlTag">Control Tag</label>
+                <input type="text" id="controlTag" name="controlTag" value="PROD" placeholder="e.g., PROD, TEST">
+            </div>
+
+            <div class="button-group">
+                <button type="button" id="startBtn" class="btn-primary">Start Import</button>
+                <button type="button" id="cancelBtn" class="btn-secondary" disabled>Cancel</button>
+            </div>
+        </form>
+
+        <div class="progress-section" id="progressSection">
+            <div class="progress-header">
+                <h3>Import Progress</h3>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div class="progress-percent" id="progressPercent">0%</div>
+            </div>
+
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-label">Total Records</div>
+                    <div class="stat-value" id="totalRecords">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Inserted</div>
+                    <div class="stat-value" id="insertedRecords">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Matched</div>
+                    <div class="stat-value" id="matchedRecords">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Unmatched</div>
+                    <div class="stat-value" id="unmatchedRecords">0</div>
+                </div>
+            </div>
+
+            <div class="log-section">
+                <div class="log-header">Import Log</div>
+                <div class="log-container" id="logContainer"></div>
+            </div>
+
+            <div class="status-message" id="statusMessage"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+        let isImporting = false;
+        let currentProgress = 0;
+
+        // Connection handling
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            updateConnectionStatus(true);
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            updateConnectionStatus(false);
+        });
+
+        socket.on('error', (data) => {
+            showError(data.message);
+            resetUI();
+        });
+
+        socket.on('import_started', (data) => {
+            addLog(`Starting import: ${data.csv_file} with tag: ${data.control_tag}`, 'info');
+            isImporting = true;
+            updateButtonStates();
+        });
+
+        socket.on('progress', (data) => {
+            addLog(data.message, detectLogType(data.message));
+            if (data.progress !== null) {
+                updateProgress(data.progress);
+            }
+        });
+
+        socket.on('import_complete', (data) => {
+            if (data.success) {
+                showSuccess(`✓ Import completed! ${data.inserted_records} records inserted.`);
+                updateStats(data);
+                addLog('Import process completed successfully!', 'success');
+            } else {
+                showError('Import process failed. Check logs for details.');
+                addLog('Import process failed.', 'error');
+            }
+            isImporting = false;
+            updateButtonStates();
+            resetProgress();
+        });
+
+        socket.on('import_cancelled', (data) => {
+            showInfo('Import was cancelled by user.');
+            addLog('Import cancelled by user.', 'warning');
+            isImporting = false;
+            updateButtonStates();
+            resetProgress();
+        });
+
+        socket.on('status_update', (data) => {
+            if (data.running) {
+                updateStats(data);
+            }
+        });
+
+        // UI Event Handlers
+        document.getElementById('startBtn').addEventListener('click', () => {
+            if (isImporting) return;
+
+            const csvFile = document.getElementById('csvFile').value.trim();
+            const controlTag = document.getElementById('controlTag').value.trim();
+
+            if (!csvFile) {
+                showError('Please specify a CSV file path');
+                return;
+            }
+
+            // Show progress section
+            document.getElementById('progressSection').classList.add('active');
+            document.getElementById('logContainer').innerHTML = '';
+            resetProgress();
+
+            // Clear previous stats
+            document.getElementById('totalRecords').textContent = '0';
+            document.getElementById('insertedRecords').textContent = '0';
+            document.getElementById('matchedRecords').textContent = '0';
+            document.getElementById('unmatchedRecords').textContent = '0';
+
+            addLog(`CSV Import started`, 'info');
+            addLog(`File: ${csvFile}`, 'info');
+            addLog(`Control Tag: ${controlTag}`, 'info');
+            addLog('', 'info');
+
+            socket.emit('start_import', {
+                csv_file: csvFile,
+                control_tag: controlTag
+            });
+        });
+
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+            if (isImporting) {
+                socket.emit('cancel_import');
+            }
+        });
+
+        // Helper Functions
+        function updateConnectionStatus(connected) {
+            const status = document.getElementById('connectionStatus');
+            const text = document.getElementById('connectionText');
+
+            if (connected) {
+                status.className = 'connection-status connected';
+                text.textContent = 'Connected';
+            } else {
+                status.className = 'connection-status disconnected';
+                text.textContent = 'Disconnected';
+            }
+        }
+
+        function updateButtonStates() {
+            document.getElementById('startBtn').disabled = isImporting;
+            document.getElementById('cancelBtn').disabled = !isImporting;
+        }
+
+        function updateProgress(percent) {
+            currentProgress = Math.min(100, Math.max(0, percent));
+            document.getElementById('progressBar').style.width = currentProgress + '%';
+            document.getElementById('progressPercent').textContent = currentProgress.toFixed(1) + '%';
+        }
+
+        function updateStats(data) {
+            if (data.total_records !== undefined) {
+                document.getElementById('totalRecords').textContent = data.total_records.toLocaleString();
+            }
+            if (data.inserted_records !== undefined) {
+                document.getElementById('insertedRecords').textContent = data.inserted_records.toLocaleString();
+            }
+            if (data.matched_records !== undefined) {
+                document.getElementById('matchedRecords').textContent = data.matched_records.toLocaleString();
+            }
+            if (data.unmatched_records !== undefined) {
+                document.getElementById('unmatchedRecords').textContent = data.unmatched_records.toLocaleString();
+            }
+        }
+
+        function resetProgress() {
+            currentProgress = 0;
+            updateProgress(0);
+        }
+
+        function addLog(message, type = 'info') {
+            const container = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function detectLogType(message) {
+            if (message.includes('Inserting:') || message.includes('Batch')) return 'progress';
+            if (message.includes('complete') || message.includes('successfully')) return 'success';
+            if (message.includes('Error') || message.includes('error') || message.includes('failed')) return 'error';
+            if (message.includes('warning') || message.includes('Warning')) return 'warning';
+            return 'info';
+        }
+
+        function showMessage(message, type) {
+            const statusMsg = document.getElementById('statusMessage');
+            statusMsg.textContent = message;
+            statusMsg.className = `status-message active ${type}`;
+
+            if (type === 'success' || type === 'error') {
+                setTimeout(() => {
+                    statusMsg.classList.remove('active');
+                }, 5000);
+            }
+        }
+
+        function showSuccess(message) {
+            showMessage(message, 'success');
+            addLog(message, 'success');
+        }
+
+        function showError(message) {
+            showMessage(message, 'error');
+            addLog(message, 'error');
+        }
+
+        function showInfo(message) {
+            showMessage(message, 'info');
+            addLog(message, 'info');
+        }
+
+        function resetUI() {
+            isImporting = false;
+            updateButtonStates();
+            document.getElementById('progressSection').classList.remove('active');
+        }
+
+        // Initialize
+        updateButtonStates();
+    </script>
+</body>
+</html>

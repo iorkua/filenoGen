@@ -27,36 +27,43 @@ CREATE TABLE [dbo].[grouping] (
     [mls_fileno] NVARCHAR(50),             -- NULL
     [mapping] INT,                         -- 0
     [group] INT,                           -- Group number: group 1 = 100 records, group 2 = 100 records, etc.
-    [sys_batch_no] INT                     -- System batch: sys_batch_no 1 = 100 records, sys_batch_no 2 = 100 records, etc.
+    [sys_batch_no] INT,                    -- System batch: sys_batch_no 1 = 100 records, sys_batch_no 2 = 100 records, etc.
+    [registry_batch_no] INT,               -- Batch counter per registry in 100-record increments
+    [tracking_id] NVARCHAR(20)             -- Unique tracking identifier TRK-XXXXXXXX-XXXXX
 )
 ```
 
 ## Registry Assignment Rules
-1. **Registry 1**: Years 1981-1991
-2. **Registry 2**: Years 1992-2025
-3. **Registry 3**: Any file number containing "CON" (overrides year rules)
+1. **Registry 1**: Years 1981-1991 for RES, COM, IND, AG families (including -RC)
+2. **Registry 2**: Years 1992-2025 for RES, COM, IND, AG families (including -RC)
+3. **Registry 3**: Any file number containing "CON" (overrides year rules) across all land uses
 
-## File Number Categories (12 types)
+## File Number Categories (16 types)
 1. RES (Residential)
 2. COM (Commercial)
-3. AG (Agriculture)
-4. RES-RC (Residential)
-5. COM-RC (Commercial)
-6. AG-RC (Agriculture)
-7. CON-RES (Conversion to Residential) → Registry 3
-8. CON-COM (Conversion to Commercial) → Registry 3
-9. CON-AG (Conversion to Agriculture) → Registry 3
-10. CON-RES-RC (Conversion to Residential + Recertification) → Registry 3
-11. CON-COM-RC (Conversion to Commercial + Recertification) → Registry 3
-12. CON-AG-RC (Conversion to Agriculture + Recertification) → Registry 3
+3. IND (Industrial)
+4. AG (Agriculture)
+5. RES-RC (Residential Recertification)
+6. COM-RC (Commercial Recertification)
+7. IND-RC (Industrial Recertification)
+8. AG-RC (Agriculture Recertification)
+9. CON-RES (Conversion to Residential) → Registry 3
+10. CON-COM (Conversion to Commercial) → Registry 3
+11. CON-IND (Conversion to Industrial) → Registry 3
+12. CON-AG (Conversion to Agriculture) → Registry 3
+13. CON-RES-RC (Conversion to Residential + Recertification) → Registry 3
+14. CON-COM-RC (Conversion to Commercial + Recertification) → Registry 3
+15. CON-IND-RC (Conversion to Industrial + Recertification) → Registry 3
+16. CON-AG-RC (Conversion to Agriculture + Recertification) → Registry 3
 
 ## Data Volume
 - **Years**: 1981-2025 (45 years)
 - **Numbers per year**: 10,000
-- **Categories**: 12
-- **Total records**: 5,400,000 records
-- **Groups**: 54,000 groups (100 records each)
-- **System batches**: 54,000 batches (100 records each)
+- **Categories**: 16
+- **Total records**: 7,200,000 records
+- **Groups**: 72,000 groups (100 records each)
+- **System batches**: 72,000 batches (100 records each)
+- **Registry batches**: 72,000 batches (tracked per registry)
 
 ## Python Implementation Plan
 
@@ -152,7 +159,7 @@ SELECT MIN([year]), MAX([year]) FROM [dbo].[grouping]
 
 -- Check CON assignments
 SELECT COUNT(*) FROM [dbo].[grouping] 
-WHERE [awaiting_fileno] LIKE '%CON%' AND [registry] = 'Registry 3'
+WHERE [awaiting_fileno] LIKE '%CON%' AND [registry] = '3'
 ```
 
 ## Risk Mitigation
@@ -163,7 +170,7 @@ WHERE [awaiting_fileno] LIKE '%CON%' AND [registry] = 'Registry 3'
 - Plan for rollback scenarios
 
 ## Success Criteria
-- [ ] All 5.4M records inserted successfully
+- [ ] All 7.2M records inserted successfully
 - [ ] Registry assignments follow rules correctly
 - [ ] Groups and batches numbered sequentially
 - [ ] No duplicate file numbers

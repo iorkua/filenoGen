@@ -5,8 +5,9 @@ A comprehensive Python-based system for generating and managing file numbers wit
 ## 🚀 Features
 
 ### Core Functionality
-- **Automated File Number Generation**: Generates 5.4M file numbers across 12 categories
+- **Automated File Number Generation**: Generates 7.2M file numbers across 16 categories
 - **Registry Assignment**: Intelligent registry assignment based on year and category rules
+- **Registry Batch Tracking**: Independent 100-record batching per registry
 - **Excel Data Import**: Import existing file records from Excel files
 - **Tracking ID Generation**: Auto-generates unique tracking IDs (format: TRK-B9010697-C2474)
 - **Database Integration**: Full SQL Server integration with transaction management
@@ -15,16 +16,20 @@ A comprehensive Python-based system for generating and managing file numbers wit
 ### File Number Categories
 1. **RES** - Residential
 2. **COM** - Commercial  
-3. **AG** - Agriculture
-4. **RES-RC** - Residential Recertification
-5. **COM-RC** - Commercial Recertification
-6. **AG-RC** - Agriculture Recertification
-7. **CON-RES** - Conversion to Residential
-8. **CON-COM** - Conversion to Commercial
-9. **CON-AG** - Conversion to Agriculture
-10. **CON-RES-RC** - Conversion to Residential + Recertification
-11. **CON-COM-RC** - Conversion to Commercial + Recertification
-12. **CON-AG-RC** - Conversion to Agriculture + Recertification
+3. **IND** - Industrial
+4. **AG** - Agriculture
+5. **RES-RC** - Residential Recertification
+6. **COM-RC** - Commercial Recertification
+7. **IND-RC** - Industrial Recertification
+8. **AG-RC** - Agriculture Recertification
+9. **CON-RES** - Conversion to Residential
+10. **CON-COM** - Conversion to Commercial
+11. **CON-IND** - Conversion to Industrial
+12. **CON-AG** - Conversion to Agriculture
+13. **CON-RES-RC** - Conversion to Residential + Recertification
+14. **CON-COM-RC** - Conversion to Commercial + Recertification
+15. **CON-IND-RC** - Conversion to Industrial + Recertification
+16. **CON-AG-RC** - Conversion to Agriculture + Recertification
 
 ### Registry Assignment Rules
 - **Registry 1**: Years 1981-1991
@@ -34,9 +39,9 @@ A comprehensive Python-based system for generating and managing file numbers wit
 ## 📊 Data Volume
 - **Years Covered**: 1981-2025 (45 years)
 - **Numbers per Category per Year**: 10,000
-- **Total Categories**: 12
-- **Total Records**: 5,400,000 file numbers
-- **Processing Groups**: 54,000 groups (100 records each)
+- **Total Categories**: 16
+- **Total Records**: 7,200,000 file numbers
+- **Processing Groups**: 72,000 groups (100 records each)
 
 ## 🛠️ Technology Stack
 - **Python 3.13.6**
@@ -98,7 +103,7 @@ DB_DRIVER=ODBC Driver 17 for SQL Server
 
 ### File Number Generation
 
-#### Generate All File Numbers (5.4M records)
+#### Generate All File Numbers (7.2M records)
 ```bash
 python src/production_insertion.py
 ```
@@ -119,6 +124,38 @@ python src/excel_importer.py
 ```bash
 python preview_excel.py
 ```
+
+### CSV Bulk Import (Fast Path)
+
+1. Export/convert the Excel source to `FileNos_PRO.csv` (UTF-8, with the header shown in the sample file).
+2. Place the CSV on a path the SQL Server service account can read (local drive or network share). This path may differ from your local path.
+3. Run the bulk loader and provide the control tag plus the server-visible path when needed:
+
+```powershell
+python scripts\bulk_insert_loader.py --csv FileNos_PRO.csv --server-path "\\SQLSERVER\imports\FileNos_PRO.csv" --control-tag PROD
+```
+
+The loader uses `BULK INSERT` directly against `dbo.fileNumber`, tags every row with the supplied `test_control`, and updates `grouping` mappings for matching `mlsfNo` values. If you ever need to undo the run, re-use the GUI/CLI cleanup option with the same control tag.
+
+### CSV Bulk Insert (Fast Path)
+
+1. Convert the Excel workbook to CSV (UTF-8, server-friendly headers):
+    ```powershell
+    python src\export_excel_to_csv.py --excel FileNos_PRO.xlsx --csv \\sql-server\share\FileNos_PRO.csv
+    ```
+    If SQL Server can already see the Excel file, adjust the `--csv` path to match the shared folder the SQL service account can read.
+
+2. Run BULK INSERT from the CSV (the `--csv` path must match what SQL Server sees on disk):
+    ```powershell
+    python src\bulk_insert_csv.py --csv \\sql-server\share\FileNos_PRO.csv --tablock
+    ```
+
+    Optional flags:
+    - `--first-row`: change the header offset (default 2).
+    - `--field-terminator` / `--row-terminator`: align with custom delimiters.
+    - `--assume-exists`: skip local file existence checks when only the server can access the path.
+
+This path bypasses pandas row-by-row inserts and lets SQL Server stream the CSV directly, yielding the fastest ingestion when the file is in a server-accessible location.
 
 ### Database Operations
 
@@ -170,7 +207,9 @@ CREATE TABLE [dbo].[grouping] (
     [mls_fileno] NVARCHAR(50),
     [mapping] INT,
     [group] INT,
-    [sys_batch_no] INT
+    [sys_batch_no] INT,
+    [registry_batch_no] INT,
+    [tracking_id] NVARCHAR(20)
 )
 ```
 
@@ -201,7 +240,7 @@ CREATE TABLE [dbo].[fileNumber] (
 
 ### File Number Generation
 - **Processing Speed**: ~1,800 records/second
-- **Total Time**: ~50 minutes for 5.4M records
+- **Total Time**: ~65 minutes for 7.2M records
 - **Memory Usage**: <500MB peak
 - **Batch Size**: 1,000 records per batch
 - **Transaction Size**: 10,000 records per transaction

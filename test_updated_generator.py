@@ -40,12 +40,14 @@ def test_updated_generator():
     print("-" * 45)
     
     test_cases = [
-        ("RES-1985-1001", 1985, "1"),      # Registry 1: 1981-1991
-        ("COM-1995-2002", 1995, "2"),      # Registry 2: 1992-2025  
-        ("AG-1990-3003", 1990, "1"),       # Registry 1: 1981-1991
-        ("CON-RES-2020-4004", 2020, "3"),  # Registry 3: Contains CON
-        ("CON-COM-RC-1985-5005", 1985, "3"), # Registry 3: CON overrides year
-        ("RES-RC-2000-6006", 2000, "2"),   # Registry 2: 1992-2025
+        ("RES-1985-1001", 1985, "1"),          # Registry 1: 1981-1991
+        ("COM-1995-2002", 1995, "2"),          # Registry 2: 1992-2025  
+        ("IND-1988-1500", 1988, "1"),          # Registry 1 with IND
+        ("IND-RC-1999-2250", 1999, "2"),       # Registry 2 with RC variant
+        ("AG-1990-3003", 1990, "1"),           # Registry 1: 1981-1991
+        ("CON-RES-2020-4004", 2020, "3"),      # Registry 3: Contains CON
+        ("CON-IND-RC-1985-5005", 1985, "3"),   # Registry 3: CON overrides year
+        ("RES-RC-2000-6006", 2000, "2"),       # Registry 2: 1992-2025
     ]
     
     for file_number, year, expected_registry in test_cases:
@@ -67,6 +69,7 @@ def test_updated_generator():
         print(f"  {i+1:2}. {record['awaiting_fileno']:<15} | "
               f"Registry {record['registry']} | "
               f"Group {record['group']:2} | "
+              f"RegBatch {record['registry_batch_no']:2} | "
               f"Batch {record['sys_batch_no']:2} | "
               f"Tracking: {record['tracking_id']}")
     
@@ -79,7 +82,7 @@ def test_updated_generator():
     required_fields = [
         'awaiting_fileno', 'created_by', 'number', 'year', 'landuse',
         'created_at', 'registry', 'mls_fileno', 'mapping', 'group',
-        'sys_batch_no', 'tracking_id'
+        'sys_batch_no', 'registry_batch_no', 'tracking_id'
     ]
     
     sample_record = sample_records[0] if sample_records else {}
@@ -97,12 +100,27 @@ def test_updated_generator():
     print("-" * 28)
     
     registry_counts = {}
+    registry_batches = {}
     for record in sample_records:
         registry = record['registry']
         registry_counts[registry] = registry_counts.get(registry, 0) + 1
+        registry_batch = record['registry_batch_no']
+        registry_batches.setdefault(registry, set()).add(registry_batch)
     
     for registry, count in sorted(registry_counts.items()):
         print(f"  Registry {registry}: {count} records")
+
+    print("\nRegistry Batch Coverage:")
+    for registry, batches in sorted(registry_batches.items()):
+        print(f"  Registry {registry}: batches {sorted(batches)}")
+
+    # Sanity check: first records for each registry start at batch 1
+    for reg in sorted(registry_counts.keys()):
+        first_record = next((r for r in sample_records if r['registry'] == reg), None)
+        if first_record:
+            batch_no = first_record['registry_batch_no']
+            status = "PASS" if batch_no == 1 else "WARN"
+            print(f"    First registry {reg} record batch: {batch_no} [{status}]")
     
     print()
     print("=" * 60)

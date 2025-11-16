@@ -1,6 +1,6 @@
 """
 Production File Number Insertion Script
-Generates and inserts all 5.4M file numbers with real-time progress tracking
+Generates and inserts all 7.2M file numbers with real-time progress tracking
 """
 
 import os
@@ -32,6 +32,17 @@ class ProductionInserter:
         self.batch_size = int(os.getenv('BATCH_SIZE', 1000))
         self.transaction_size = int(os.getenv('TRANSACTION_SIZE', 10000))
         self.records_per_group = int(os.getenv('RECORDS_PER_GROUP', 100))
+        self.enable_fast_executemany = os.getenv('FAST_EXECUTEMANY', '1') not in ['0', 'false', 'False']
+        self._fast_executemany_enabled = False
+        self._fast_executemany_warned = False
+        self.insert_sql = (
+            """
+                INSERT INTO [dbo].[grouping] 
+                ([awaiting_fileno], [created_by], [number], [year], [landuse], 
+                 [created_at], [registry], [mls_fileno], [mapping], [group], [sys_batch_no], [registry_batch_no], [tracking_id])
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        )
         
         # Progress tracking
         self.start_time = None
@@ -40,6 +51,7 @@ class ProductionInserter:
         self.current_category = ""
         self.categories_completed = 0
         self.total_categories = len(self.generator.categories)
+        self._generator_initialized = False
         
         # Performance metrics
         self.records_per_second = 0
@@ -139,6 +151,12 @@ class ProductionInserter:
         """Insert a batch of records"""
         try:
             cursor = connection.cursor()
+            if self.enable_fast_executemany and hasattr(cursor, 'fast_executemany'):
+                cursor.fast_executemany = True
+                self._fast_executemany_enabled = True
+            elif self.enable_fast_executemany and not self._fast_executemany_warned:
+                self.logger.info("fast_executemany not available for this driver; using standard executemany")
+                self._fast_executemany_warned = True
             
             # Prepare batch data
             batch_data = []
@@ -155,18 +173,12 @@ class ProductionInserter:
                     record['mapping'],
                     record['group'],
                     record['sys_batch_no'],
+                    record['registry_batch_no'],
                     record['tracking_id']
                 ))
             
             # Execute batch insert
-            insert_sql = """
-                INSERT INTO [dbo].[grouping] 
-                ([awaiting_fileno], [created_by], [number], [year], [landuse], 
-                 [created_at], [registry], [mls_fileno], [mapping], [group], [sys_batch_no], [tracking_id])
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """
-            
-            cursor.executemany(insert_sql, batch_data)
+            cursor.executemany(self.insert_sql, batch_data)
             cursor.close()
             return True
             
@@ -184,7 +196,11 @@ class ProductionInserter:
             transaction_records = 0
             
             # Generate records for this category
-            for record in self.generator.generate_file_numbers([category]):
+            reset_flag = not self._generator_initialized
+            record_iter = self.generator.generate_file_numbers([category], reset_counters=reset_flag)
+            self._generator_initialized = True
+
+            for record in record_iter:
                 batch_records.append(record)
                 
                 # Process batch when it reaches batch_size

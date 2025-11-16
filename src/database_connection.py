@@ -177,7 +177,7 @@ class DatabaseConnection:
             expected_columns = [
                 'id', 'awaiting_fileno', 'created_by', 'number', 'year',
                 'landuse', 'created_at', 'registry', 'mls_fileno', 
-                'mapping', 'group', 'sys_batch_no'
+                'mapping', 'group', 'sys_batch_no', 'registry_batch_no', 'tracking_id'
             ]
             
             actual_columns = [col[0] for col in columns]

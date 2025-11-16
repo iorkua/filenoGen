@@ -1,13 +1,13 @@
 """
 File Number Generator
-Generates file numbers for all 12 categories with proper registry assignment
+Generates file numbers for all configured categories with proper registry assignment
 """
 
 import os
 import random
 import string
 from datetime import datetime
-from typing import List, Dict, Any, Generator
+from typing import List, Dict, Any, Generator, Optional, Iterable
 import logging
 from dotenv import load_dotenv
 
@@ -18,23 +18,55 @@ class FileNumberGenerator:
     """Generate file numbers with proper categorization and registry assignment"""
     
     def __init__(self):
-        # File number categories (12 types)
-        self.categories = [
-            'RES', 'COM', 'AG',                    # Basic land use
-            'RES-RC', 'COM-RC', 'AG-RC',           # Land use with record
-            'CON-RES', 'CON-COM', 'CON-AG',        # Conversion land use
-            'CON-RES-RC', 'CON-COM-RC', 'CON-AG-RC' # Conversion + record
+        # Registry-driven category sequencing
+        self.registry_sequences = [
+            {
+                'registry': '1',
+                'categories': ['RES', 'COM', 'IND', 'AG', 'RES-RC', 'COM-RC', 'IND-RC', 'AG-RC'],
+                'year_range': (1981, 1991)
+            },
+            {
+                'registry': '2',
+                'categories': ['RES', 'COM', 'IND', 'AG', 'RES-RC', 'COM-RC', 'IND-RC', 'AG-RC'],
+                'year_range': (1992, 2025)
+            },
+            {
+                'registry': '3',
+                'categories': ['CON-RES', 'CON-COM', 'CON-IND', 'CON-AG', 'CON-RES-RC', 'CON-COM-RC', 'CON-IND-RC', 'CON-AG-RC'],
+                'year_range': (1981, 2025)
+            }
         ]
-        
+
+        ordered_categories: List[str] = []
+        for sequence in self.registry_sequences:
+            for category in sequence['categories']:
+                if category not in ordered_categories:
+                    ordered_categories.append(category)
+        self.categories = ordered_categories
+
         # Configuration from environment
         self.start_year = int(os.getenv('START_YEAR', 1981))
         self.end_year = int(os.getenv('END_YEAR', 2025))
         self.numbers_per_year = int(os.getenv('NUMBERS_PER_YEAR', 10000))
         self.records_per_group = int(os.getenv('RECORDS_PER_GROUP', 100))
+
+        # Registry year ranges (inclusive)
+        self.registry_year_ranges = {
+            '1': (1981, 1991),
+            '2': (1992, 2025)
+        }
         
         # Setup logging
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
+
+        # Initialize internal counters that can persist across generator calls
+        self.reset_counters()
+
+    def reset_counters(self) -> None:
+        """Reset global record and registry counters."""
+        self._global_record_count = 0
+        self._registry_counts: Dict[str, int] = {}
         
     def extract_land_use(self, file_number: str) -> str:
         """
@@ -48,6 +80,8 @@ class FileNumberGenerator:
             return 'Residential'
         elif 'COM' in file_number:
             return 'Commercial'
+        elif 'IND' in file_number:
+            return 'Industrial'
         elif 'AG' in file_number:
             return 'Agriculture'
         else:
@@ -66,12 +100,12 @@ class FileNumberGenerator:
         if 'CON' in file_number:
             return '3'
         
-        # Registry 1: Years 1981-1991
-        if 1981 <= year <= 1991:
+        start_1, end_1 = self.registry_year_ranges['1']
+        if start_1 <= year <= end_1:
             return '1'
-        
-        # Registry 2: Years 1992-2025
-        if 1992 <= year <= 2025:
+
+        start_2, end_2 = self.registry_year_ranges['2']
+        if start_2 <= year <= end_2:
             return '2'
         
         # Default fallback
@@ -91,90 +125,126 @@ class FileNumberGenerator:
         
         return f"TRK-{part1}-{part2}"
     
-    def generate_file_numbers(self, categories: List[str] = None, max_per_category: int = None) -> Generator[Dict[str, Any], None, None]:
+    def generate_file_numbers(
+        self,
+        categories: Optional[Iterable[str]] = None,
+        max_per_category: Optional[int] = None,
+        *,
+        reset_counters: bool = True
+    ) -> Generator[Dict[str, Any], None, None]:
         """
         Generate file numbers for specified categories
         Args:
-            categories: List of categories to generate (default: all 12)
+            categories: List of categories to generate (default: all configured categories)
             max_per_category: Maximum records per category (default: all years/numbers)
         Yields:
             Dictionary with file number data
         """
-        if categories is None:
-            categories = self.categories
+        if reset_counters:
+            self.reset_counters()
+
+        category_filter = None
+        if categories is not None:
+            category_filter = {category.upper() for category in categories}
+
+        category_counts: Dict[str, int] = {}
         
-        years = list(range(self.start_year, self.end_year + 1))
-        
-        # Global counters for group and batch numbering
-        global_record_count = 0
-        
-        for category in categories:
-            self.logger.info(f"Generating file numbers for category: {category}")
-            category_record_count = 0
-            
-            for year in years:
-                numbers_range = range(1, self.numbers_per_year + 1)
-                
-                # Apply limit if specified
-                if max_per_category:
-                    remaining = max_per_category - category_record_count
-                    if remaining <= 0:
+        for sequence in self.registry_sequences:
+            seq_start, seq_end = sequence['year_range']
+            seq_start = max(seq_start, self.start_year)
+            seq_end = min(seq_end, self.end_year)
+            if seq_start > seq_end:
+                continue
+            registry_id = sequence.get('registry')
+            if registry_id is not None and registry_id not in self._registry_counts:
+                self._registry_counts[registry_id] = 0
+
+            for category in sequence['categories']:
+                if category_filter and category not in category_filter:
+                    continue
+
+                category_counts.setdefault(category, 0)
+                generated_before = category_counts[category]
+
+                self.logger.info(
+                    f"Generating file numbers for category: {category} (Years {seq_start}-{seq_end})"
+                )
+
+                for year in range(seq_start, seq_end + 1):
+                    if max_per_category:
+                        remaining = max_per_category - category_counts[category]
+                        if remaining <= 0:
+                            break
+                        number_cap = min(self.numbers_per_year, remaining)
+                    else:
+                        number_cap = self.numbers_per_year
+
+                    for number in range(1, number_cap + 1):
+                        self._global_record_count += 1
+                        category_counts[category] += 1
+
+                        file_number = f"{category}-{year}-{number}"
+                        group_number = ((self._global_record_count - 1) // self.records_per_group) + 1
+                        batch_number = group_number
+
+                        land_use = self.extract_land_use(file_number)
+                        registry = self.assign_registry(file_number, year)
+                        self._registry_counts.setdefault(registry, 0)
+                        self._registry_counts[registry] += 1
+                        registry_batch_no = ((self._registry_counts[registry] - 1) // self.records_per_group) + 1
+                        tracking_id = self.generate_tracking_id()
+
+                        yield {
+                            'awaiting_fileno': file_number,
+                            'created_by': 'Generated',
+                            'number': self._global_record_count,
+                            'year': year,
+                            'landuse': land_use,
+                            'created_at': datetime.now(),
+                            'registry': registry,
+                            'mls_fileno': None,
+                            'mapping': 0,
+                            'group': group_number,
+                            'sys_batch_no': batch_number,
+                            'registry_batch_no': registry_batch_no,
+                            'tracking_id': tracking_id,
+                            'category': category
+                        }
+
+                        if max_per_category and category_counts[category] >= max_per_category:
+                            break
+
+                    if max_per_category and category_counts[category] >= max_per_category:
                         break
-                    numbers_range = range(1, min(self.numbers_per_year + 1, remaining + 1))
-                
-                for number in numbers_range:
-                    global_record_count += 1
-                    category_record_count += 1
-                    
-                    # Generate file number
-                    file_number = f"{category}-{year}-{number}"
-                    
-                    # Calculate group and batch (both same logic: 100 records each)
-                    group_number = ((global_record_count - 1) // self.records_per_group) + 1
-                    batch_number = group_number  # Same as group for this implementation
-                    
-                    # Extract land use and assign registry
-                    land_use = self.extract_land_use(file_number)
-                    registry = self.assign_registry(file_number, year)
-                    tracking_id = self.generate_tracking_id()
-                    
-                    yield {
-                        'awaiting_fileno': file_number,
-                        'created_by': 'Generated',
-                        'number': global_record_count,
-                        'year': year,
-                        'landuse': land_use,
-                        'created_at': datetime.now(),
-                        'registry': registry,
-                        'mls_fileno': None,
-                        'mapping': 0,
-                        'group': group_number,
-                        'sys_batch_no': batch_number,
-                        'tracking_id': tracking_id
-                    }
-                    
-                    # Break if we've reached the category limit
-                    if max_per_category and category_record_count >= max_per_category:
-                        break
-                
-                # Break year loop if category limit reached
-                if max_per_category and category_record_count >= max_per_category:
-                    break
-            
-            self.logger.info(f"Generated {category_record_count} records for {category}")
+
+                generated_now = category_counts[category] - generated_before
+                self.logger.info(f"Generated {generated_now} records for {category}")
     
-    def generate_sample_data(self, records_per_category: int = 10) -> List[Dict[str, Any]]:
+    def generate_sample_data(
+        self,
+        records_per_category: int = 10,
+        categories: Optional[Iterable[str]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Generate a small sample of data for testing
         Args:
             records_per_category: Number of records to generate per category
+            categories: Optional subset of categories to generate
         Returns:
             List of file number records
         """
-        self.logger.info(f"Generating sample data: {records_per_category} records per category")
+        if categories:
+            category_list = [cat.upper() for cat in categories]
+            category_info = ', '.join(category_list)
+        else:
+            category_list = None
+            category_info = 'all categories'
+        self.logger.info(
+            f"Generating sample data: {records_per_category} records per category for {category_info}"
+        )
         
         sample_data = []
-        for record in self.generate_file_numbers(max_per_category=records_per_category):
+        for record in self.generate_file_numbers(categories=category_list, max_per_category=records_per_category):
             sample_data.append(record)
         
         self.logger.info(f"Generated {len(sample_data)} total sample records")
@@ -200,13 +270,14 @@ class FileNumberGenerator:
         # Count by category, registry, land use
         for record in records:
             # Extract category from file number
-            category = record['awaiting_fileno'].split('-')[0]
-            if 'CON' in record['awaiting_fileno']:
-                parts = record['awaiting_fileno'].split('-')
-                if len(parts) >= 3:
-                    category = '-'.join(parts[:2]) if parts[1] in ['RES', 'COM', 'AG'] else parts[0]
-                    if len(parts) >= 4 and parts[2] == 'RC':
-                        category = '-'.join(parts[:3])
+            fileno_parts = record['awaiting_fileno'].split('-')
+            category = fileno_parts[0]
+
+            if category == 'CON':
+                if len(fileno_parts) >= 3:
+                    category = '-'.join(fileno_parts[:3]) if fileno_parts[2] == 'RC' else '-'.join(fileno_parts[:2])
+            elif len(fileno_parts) >= 2 and fileno_parts[1] == 'RC':
+                category = '-'.join(fileno_parts[:2])
             
             stats['categories'][category] = stats['categories'].get(category, 0) + 1
             stats['registries'][record['registry']] = stats['registries'].get(record['registry'], 0) + 1
@@ -238,19 +309,25 @@ def main():
     
     generator = FileNumberGenerator()
     
-    # Generate sample data (10 records per category = 120 total)
+    # Generate sample data (10 records per category)
     sample_records = generator.generate_sample_data(records_per_category=10)
     
     # Print first few records
     print(f"\nGenerated {len(sample_records)} sample records")
     print("\nFirst 5 records:")
     for i, record in enumerate(sample_records[:5]):
-        print(f"{i+1}. {record['awaiting_fileno']} | {record['registry']} | Group {record['group']} | {record['landuse']}")
+        print(
+            f"{i+1}. {record['awaiting_fileno']} | Registry {record['registry']}"
+            f" | Group {record['group']} | Registry Batch {record['registry_batch_no']} | {record['landuse']}"
+        )
     
     # Print last few records
     print("\nLast 5 records:")
     for i, record in enumerate(sample_records[-5:], len(sample_records)-4):
-        print(f"{i}. {record['awaiting_fileno']} | {record['registry']} | Group {record['group']} | {record['landuse']}")
+        print(
+            f"{i}. {record['awaiting_fileno']} | Registry {record['registry']}"
+            f" | Group {record['group']} | Registry Batch {record['registry_batch_no']} | {record['landuse']}"
+        )
     
     # Get and display statistics
     print("\n" + "=" * 50)

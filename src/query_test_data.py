@@ -24,7 +24,7 @@ def main():
         
         # Show all test records
         cursor.execute("""
-            SELECT [awaiting_fileno], [registry], [group], [sys_batch_no], [landuse], [year], [number]
+            SELECT [awaiting_fileno], [registry], [group], [sys_batch_no], [registry_batch_no], [landuse], [year], [number]
             FROM [dbo].[grouping] 
             WHERE [created_by] = 'Generated'
             ORDER BY [number]
@@ -34,12 +34,12 @@ def main():
         
         print(f"Found {len(records)} test records in database:")
         print()
-        print("File Number            | Registry  | Group | Batch | Land Use | Year | Seq#")
-        print("-" * 75)
+        print("File Number            | Reg | Group | Batch | RegBatch | Land Use | Year | Seq#")
+        print("-" * 90)
         
         for record in records:
-            fileno, registry, group, batch, landuse, year, number = record
-            print(f"{fileno:<22} | {registry:<9} | {group:<5} | {batch:<5} | {landuse:<8} | {year} | {number}")
+            fileno, registry, group, batch, reg_batch, landuse, year, number = record
+            print(f"{fileno:<22} | {registry:<3} | {group:<5} | {batch:<5} | {reg_batch:<8} | {landuse:<8} | {year} | {number}")
         
         cursor.close()
         

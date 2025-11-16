@@ -5,8 +5,9 @@ Test script to insert a small sample of file numbers into the database
 
 import os
 import sys
+import argparse
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 from dotenv import load_dotenv
 
@@ -70,8 +71,8 @@ class DatabaseInserter:
             insert_sql = """
                 INSERT INTO [dbo].[grouping] 
                 ([awaiting_fileno], [created_by], [number], [year], [landuse], 
-                 [created_at], [registry], [mls_fileno], [mapping], [group], [sys_batch_no])
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 [created_at], [registry], [mls_fileno], [mapping], [group], [sys_batch_no], [registry_batch_no], [tracking_id])
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             
             # Prepare data for batch insert
@@ -88,7 +89,9 @@ class DatabaseInserter:
                     record['mls_fileno'],
                     record['mapping'],
                     record['group'],
-                    record['sys_batch_no']
+                    record['sys_batch_no'],
+                    record['registry_batch_no'],
+                    record['tracking_id']
                 ))
             
             # Execute batch insert
@@ -169,7 +172,7 @@ class DatabaseInserter:
                 FROM [dbo].[grouping] 
                 WHERE [created_by] = 'Generated' 
                 AND [awaiting_fileno] LIKE '%CON%' 
-                AND [registry] = 'Registry 3'
+                AND [registry] = '3'
             """)
             con_registry3_count = cursor.fetchone()[0]
             
@@ -189,7 +192,7 @@ class DatabaseInserter:
             
             # Sample records
             cursor.execute("""
-                SELECT TOP 5 [awaiting_fileno], [registry], [group], [landuse], [year]
+                SELECT TOP 5 [awaiting_fileno], [registry], [group], [registry_batch_no], [landuse], [year]
                 FROM [dbo].[grouping] 
                 WHERE [created_by] = 'Generated'
                 ORDER BY [number]
@@ -204,17 +207,26 @@ class DatabaseInserter:
             self.logger.error(f"Error validating data: {e}")
             return {'error': str(e)}
     
-    def run_test(self, records_per_category: int = 5) -> bool:
+    def run_test(self, records_per_category: int = 5, categories: Optional[List[str]] = None) -> bool:
         """
         Run the complete test: generate, insert, and validate
         Args:
             records_per_category: Number of records per category to test
+            categories: Optional subset of categories to include
         Returns:
             True if test passed, False otherwise
         """
-        print(f"Starting Database Insertion Test")
+        active_categories = categories or self.generator.categories
+        missing_categories = [cat for cat in active_categories if cat not in self.generator.categories]
+        if missing_categories:
+            print(f"❌ Unknown categories requested: {', '.join(missing_categories)}")
+            return False
+        total_expected = records_per_category * len(active_categories)
+
+        print("Starting Database Insertion Test")
         print(f"Records per category: {records_per_category}")
-        print(f"Total expected records: {records_per_category * 12}")
+        print(f"Categories: {', '.join(active_categories)}")
+        print(f"Total expected records: {total_expected}")
         print("=" * 60)
         
         # Get database connection
@@ -236,7 +248,7 @@ class DatabaseInserter:
             
             # Step 2: Generate test data
             print(f"\nStep 2: Generating {records_per_category} records per category...")
-            test_records = self.generator.generate_sample_data(records_per_category)
+            test_records = self.generator.generate_sample_data(records_per_category, categories=active_categories)
             print(f"✅ Generated {len(test_records)} records")
             
             # Step 3: Insert data
@@ -278,8 +290,8 @@ class DatabaseInserter:
             
             print(f"\nSample Records:")
             for i, record in enumerate(validation_results['sample_records'], 1):
-                fileno, registry, group, landuse, year = record
-                print(f"  {i}. {fileno} | {registry} | Group {group} | {landuse} | {year}")
+                fileno, registry, group, registry_batch, landuse, year = record
+                print(f"  {i}. {fileno} | {registry} | Group {group} | RegBatch {registry_batch} | {landuse} | {year}")
             
             # Overall test result
             all_checks_passed = (
@@ -304,10 +316,20 @@ class DatabaseInserter:
 
 def main():
     """Run the database insertion test"""
+    parser = argparse.ArgumentParser(description="Insert test file numbers into the database")
+    parser.add_argument("--records-per-category", type=int, default=5,
+                        help="Number of records to generate per category (default: 5)")
+    parser.add_argument("--categories", type=str, default=None,
+                        help="Comma-separated list of categories to include")
+
+    args = parser.parse_args()
+
+    categories = None
+    if args.categories:
+        categories = [cat.strip().upper() for cat in args.categories.split(',') if cat.strip()]
+
     inserter = DatabaseInserter()
-    
-    # Run test with 5 records per category (60 total records)
-    success = inserter.run_test(records_per_category=5)
+    success = inserter.run_test(records_per_category=args.records_per_category, categories=categories)
     
     if success:
         print("\n✅ Database insertion test completed successfully!")

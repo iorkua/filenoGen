@@ -3,12 +3,15 @@ Rack Shelf Labels CSV Importer
 Imports rack and shelf label data from CSV file into the Rack_Shelf_Labels database table.
 """
 
-import pandas as pd
+import argparse
 import logging
-from datetime import datetime
-from database_connection import DatabaseConnection
-import sys
 import os
+import sys
+from datetime import datetime
+
+import pandas as pd
+
+from database_connection import DatabaseConnection
 
 # Configure logging
 logging.basicConfig(
@@ -202,6 +205,139 @@ class RackShelfImporter:
         logging.info(f"Import completed at: {datetime.now()}")
         logging.info("=" * 60)
     
+    def assign_labels_to_grouping(self, records_per_label=100, only_unassigned=True):
+        """Populate grouping.shelf_rack and flag labels as used."""
+        if records_per_label <= 0:
+            raise ValueError("records_per_label must be greater than zero")
+
+        logging.info("[1/5] Analysing available grouping rows and rack labels...")
+
+        grouping_filter = "WHERE shelf_rack IS NULL" if only_unassigned else ""
+        label_filter = "WHERE is_used = 0" if only_unassigned else ""
+
+        db_helper = DatabaseConnection()
+        conn = db_helper.get_connection('pyodbc')
+
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute(f"SELECT COUNT(*) FROM [dbo].[grouping] {grouping_filter}")
+            pending_grouping = cursor.fetchone()[0]
+
+            cursor.execute(f"SELECT COUNT(*) FROM [dbo].[Rack_Shelf_Labels] {label_filter}")
+            available_labels = cursor.fetchone()[0]
+
+            capacity = available_labels * records_per_label
+            assignable = min(pending_grouping, capacity)
+            labels_to_use = min(
+                available_labels,
+                (assignable + records_per_label - 1) // records_per_label
+            )
+
+            logging.info(
+                "Grouping rows eligible: %s | Labels available: %s | Capacity: %s | Rows to assign: %s",
+                pending_grouping,
+                available_labels,
+                capacity,
+                assignable
+            )
+
+            if assignable == 0 or labels_to_use == 0:
+                logging.info("No assignments necessary.")
+                return
+
+            logging.info("[2/5] Staging assignments for %s grouping rows...", assignable)
+
+            division_factor = records_per_label
+
+            assignment_sql = f"""
+                IF OBJECT_ID('tempdb..#assignments') IS NOT NULL
+                    DROP TABLE #assignments;
+
+                ;WITH grouping_cte AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (ORDER BY id) AS rn
+                    FROM [dbo].[grouping]
+                    {grouping_filter}
+                ),
+                labels_cte AS (
+                    SELECT id AS label_id,
+                           full_label,
+                           ROW_NUMBER() OVER (ORDER BY rack, shelf, id) AS rn
+                    FROM [dbo].[Rack_Shelf_Labels]
+                    {label_filter}
+                ),
+                limited_grouping AS (
+                    SELECT id, rn
+                    FROM grouping_cte
+                    WHERE rn <= {assignable}
+                ),
+                limited_labels AS (
+                    SELECT label_id, full_label, rn
+                    FROM labels_cte
+                    WHERE rn <= {labels_to_use}
+                ),
+                assignments AS (
+                    SELECT g.id AS grouping_id,
+                           l.label_id,
+                           l.full_label,
+                           ((g.rn - 1) / {division_factor}) + 1 AS label_slot
+                    FROM limited_grouping g
+                    JOIN limited_labels l
+                      ON ((g.rn - 1) / {division_factor}) + 1 = l.rn
+                )
+                SELECT grouping_id, label_id, full_label
+                INTO #assignments
+                FROM assignments;
+            """
+
+            cursor.execute(assignment_sql)
+
+            cursor.execute("SELECT COUNT(*) FROM #assignments")
+            staged = cursor.fetchone()[0]
+            logging.info("Assignments staged: %s", staged)
+
+            logging.info("[3/5] Updating grouping table...")
+            cursor.execute(
+                """
+                UPDATE g
+                SET shelf_rack = a.full_label
+                FROM [dbo].[grouping] g
+                JOIN #assignments a ON g.id = a.grouping_id
+                """
+            )
+            grouping_updates = cursor.rowcount
+            logging.info("Grouping rows updated: %s", grouping_updates)
+
+            logging.info("[4/5] Marking rack shelf labels as used...")
+            cursor.execute(
+                """
+                UPDATE r
+                SET is_used = 1,
+                    updated_at = GETDATE()
+                FROM [dbo].[Rack_Shelf_Labels] r
+                JOIN (
+                    SELECT DISTINCT label_id FROM #assignments
+                ) AS used ON r.id = used.label_id
+                """
+            )
+            label_updates = cursor.rowcount
+            logging.info("Rack shelf labels marked as used: %s", label_updates)
+
+            logging.info("[5/5] Cleaning up staging artifacts...")
+            cursor.execute("DROP TABLE #assignments")
+
+            cursor.close()
+            conn.commit()
+            logging.info("Rack shelf assignment completed successfully.")
+
+        except Exception:
+            conn.rollback()
+            logging.exception("Rack shelf assignment failed; transaction rolled back.")
+            raise
+        finally:
+            conn.close()
+
     def run_import(self):
         """Execute the complete import process."""
         try:
@@ -240,20 +376,57 @@ class RackShelfImporter:
                 logging.info("Database connection closed")
 
 def main():
-    """Main function to run the import process."""
-    # Define the CSV file path
-    csv_file_path = r"c:\Users\Administrator\Documents\filenoGen\Rack_Shelf_Labels.csv"
-    
-    # Create and run the importer
-    importer = RackShelfImporter(csv_file_path)
-    success = importer.run_import()
-    
-    if success:
-        print("\n✅ Rack Shelf Labels import completed successfully!")
-        print(f"📊 Imported {importer.successful_imports} records")
-    else:
-        print("\n❌ Import process failed. Check the logs for details.")
-        sys.exit(1)
+    """Entry point for rack shelf operations."""
+    default_csv = r"c:\Users\Administrator\Documents\filenoGen\Rack_Shelf_Labels.csv"
+
+    parser = argparse.ArgumentParser(description="Rack shelf label utilities")
+    parser.add_argument(
+        "--csv",
+        default=default_csv,
+        help="Path to Rack_Shelf_Labels.csv (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["import", "assign", "both"],
+        default="import",
+        help="Operation to perform"
+    )
+    parser.add_argument(
+        "--records-per-label",
+        type=int,
+        default=100,
+        help="Number of grouping rows mapped to each rack shelf label"
+    )
+    parser.add_argument(
+        "--reuse-used-labels",
+        action="store_true",
+        help="Allow reassignment of labels already marked as used"
+    )
+
+    args = parser.parse_args()
+
+    importer = RackShelfImporter(args.csv)
+
+    if args.mode in ("import", "both"):
+        success = importer.run_import()
+        if not success:
+            print("\n❌ Import process failed. Check the logs for details.")
+            if args.mode == "import":
+                sys.exit(1)
+        else:
+            print("\n✅ Rack Shelf Labels import completed successfully!")
+            print(f"📊 Imported {importer.successful_imports} records")
+
+    if args.mode in ("assign", "both"):
+        try:
+            importer.assign_labels_to_grouping(
+                records_per_label=args.records_per_label,
+                only_unassigned=not args.reuse_used_labels
+            )
+            print("\n✅ Rack shelf assignment completed. Check logs for details.")
+        except Exception:
+            print("\n❌ Rack shelf assignment failed. Check the logs for details.")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
