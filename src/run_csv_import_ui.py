@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).parent
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
 
-from csv_import_server import app, socketio, logger
+from csv_import_server import app, socketio, logger, start_next_job
 
 
 def open_browser():
@@ -38,10 +38,10 @@ def main():
     logger.info("Server will be available at: http://localhost:5000")
     logger.info("")
     logger.info("Features:")
-    logger.info("  [+] Fast batch CSV import (2000 records/batch)")
-    logger.info("  [+] Real-time progress tracking")
+    logger.info("  [+] Chunked CSV uploads (<=1,000 rows per file)")
+    logger.info("  [+] Sequential queue with real-time progress tracking")
     logger.info("  [+] Automatic grouping table lookup (indexed)")
-    logger.info("  [+] Web-based UI with live statistics")
+    logger.info("  [+] Web-based dashboard with duplicate counters")
     logger.info("  [+] Batch grouping updates")
     logger.info("")
     logger.info("="*70)
@@ -50,6 +50,9 @@ def main():
     browser_thread = threading.Thread(target=open_browser, daemon=True)
     browser_thread.start()
     
+    # Kick off any pending jobs from previous sessions
+    start_next_job()
+
     # Run the Flask app
     socketio.run(
         app,

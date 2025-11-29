@@ -5,16 +5,16 @@ A high-performance CSV importer for the FileNos database with modern web UI, rea
 ## Features
 
 ✅ **Fast Batch Processing**
-- 2000+ records per batch for optimal throughput
+- Configurable batches (default 1,000 rows) for balanced throughput
 - Indexed grouping table lookups
-- Optimized SQL queries with bulk inserts
-- Typically 1000+ records/second import speed
+- Optimized SQL queries with tuned chunk sizes
+- Typically 1,000+ records/second import speed on healthy hardware
 
 ✅ **Modern Web UI**
 - Real-time progress tracking via WebSocket
-- Live statistics dashboard
-- Beautiful, responsive design
-- Works on desktop and mobile browsers
+- Live statistics dashboard with duplicate counters
+- Queue multiple 1k CSV chunks and let the server run them sequentially
+- Responsive design that works on desktop and mobile browsers
 
 ✅ **Real-time Progress Feedback**
 - Live import progress percentage
@@ -86,13 +86,13 @@ The server will:
 2. Automatically open your browser
 3. Display the import UI
 
-**Using the Web UI:**
+**Using the Web UI (chunk queue):**
 
-1. **Specify CSV file**: Enter the path to your CSV file (default: `FileNos_PRO.csv`)
-2. **Control tag**: Enter a tag for tracking (default: `PROD`)
-3. **Start Import**: Click the "Start Import" button
-4. **Monitor Progress**: Watch real-time progress, statistics, and logs
-5. **Cancel if needed**: Click "Cancel" to stop the import at any time
+1. **Prepare slices:** Split large CSVs into chunks of up to 1,000 data rows (header included in each slice).
+2. **Upload chunk:** Use the "Queue for Import" form to select a CSV file and optionally adjust the control tag.
+3. **Auto-sequencing:** Each upload is added to the queue; the server processes chunks one at a time.
+4. **Monitor progress:** The dashboard tracks status, percent complete, inserted/duplicate counts, and a live log for the active chunk.
+5. **Review history:** Completed imports stay in the queue with their metrics so you can verify results or retry failed batches.
 
 ### Option 2: Command Line
 
@@ -111,6 +111,13 @@ python fast_csv_importer.py --help
 --csv PATH              Path to CSV file (default: FileNos_PRO.csv)
 --control-tag TAG       Control tag for tracking (default: PROD)
 ```
+
+### Preparing 1k CSV Chunks
+
+- Keep the header row in every slice so the importer can map columns correctly.
+- Stay at or below 1,000 data rows per file; uploads above the limit are rejected.
+- Name chunks descriptively (for example `filenos_part01.csv`, `filenos_part02.csv`) to make queue tracking easier.
+- Uploaded files are stored under `uploads/` until processed; successful jobs keep their metrics so you have an audit trail.
 
 ## CSV File Format
 
@@ -150,14 +157,14 @@ Validate Results (5%)
 ### Performance Optimization
 
 1. **Indexed Lookups**
-   - Uses indexed `awaiting_fileno` in grouping table
-   - Bulk lookups via IN clause (1000 records/chunk)
-   - Cache-based deduplication
+    - Uses indexed `awaiting_fileno` in grouping table
+    - Bulk lookups via IN clause (500 record batches to stay lock-friendly)
+    - Cache-based deduplication
 
 2. **Batch Inserts**
-   - 2000 records per batch
-   - Uses `executemany()` for optimal throughput
-   - Commits after each batch
+    - Default 1,000 records per batch (configurable)
+    - Uses `executemany()` for optimal throughput
+    - Frequent commits keep transaction log usage low
 
 3. **Staged Updates**
    - Grouping updates staged in memory
@@ -172,6 +179,7 @@ Validate Results (5%)
 - **Matched records**: Records with grouping matches
 - **Unmatched records**: Records without grouping matches
 - **Skipped records**: Records with errors
+- **Duplicate records**: Rows ignored because the MLS number already exists or repeats in the CSV
 
 ## mlsfNo Cleaning
 
@@ -187,6 +195,13 @@ The importer automatically cleans `mlsfNo` values for matching:
 Input:  "KN 1660 AND EXTENSION (TEMP)"
 Output: "KN 1660"
 ```
+
+## Duplicate Handling
+
+- The importer normalizes MLS numbers (trims whitespace, collapses gaps, uppercases) before processing.
+- Any record whose normalized MLS number already exists in `[dbo].[fileNumber]` is skipped.
+- Duplicate MLS numbers within the same CSV file are also ignored.
+- Progress and summary logs show how many records were skipped as duplicates.
 
 ## Web UI Features
 
@@ -264,6 +279,8 @@ filenoGen/
 ├── run_csv_import_ui.bat        # Quick launcher (Windows)
 ├── requirements.txt             # Python dependencies
 ├── .env                         # Database configuration
+├── uploads/                     # Queued CSV chunks + persistent job metadata
+│   └── jobs.json                # Queue state (auto-created)
 └── src/
     ├── fast_csv_importer.py     # Core importer logic
     ├── csv_import_server.py     # Flask/WebSocket server
@@ -311,26 +328,23 @@ print(f"Matched: {importer.matched_records}")
 print(f"Unmatched: {importer.unmatched_records}")
 ```
 
+emit('start_import', {
+emit('cancel_import')
+emit('get_status')
 ### Server Endpoints
+
+**HTTP (REST):**
+
+- `POST /api/upload` — multipart form upload (`file`, `controlTag`). Validates ≤1,000 data rows and queues the job.
+- `GET /api/jobs` — returns the current queue, job metrics, and the maximum row limit per chunk.
 
 **WebSocket Events:**
 
-```
-emit('start_import', {
-    'csv_file': 'FileNos_PRO.csv',
-    'control_tag': 'PROD'
-})
-
-emit('cancel_import')
-emit('get_status')
-
-# Received events:
-on('progress', data)          # Progress update
-on('import_complete', data)   # Import finished
-on('import_cancelled', data)  # Import cancelled
-on('error', data)             # Error occurred
-on('status_update', data)     # Status change
-```
+- `jobs_update` — broadcast when the queue changes (new job, status change, completion).
+- `progress` — live importer messages for the active job (`job_id`, `message`, `progress`).
+- `import_complete` — fired after each job finishes with success flag and record counts.
+- `status_update` — snapshot of queue and active job when requested.
+- `error` — surfaced if the server encounters an issue (e.g., bad upload, database error).
 
 ## Performance Tips
 

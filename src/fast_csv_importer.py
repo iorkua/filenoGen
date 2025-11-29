@@ -8,7 +8,7 @@ import csv
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional, List, Dict, Any
+from typing import Callable, Optional, List, Dict, Any, Set
 import threading
 from queue import Queue
 import sys
@@ -44,8 +44,8 @@ class FastCSVImporter:
     def __init__(self):
         """Initialize the CSV importer."""
         self.db_connection = DatabaseConnection()
-        self.batch_size = 2000  # Increased batch size for better throughput
-        self.grouping_batch_size = 1000
+        self.batch_size = 1000  # Smaller batches for faster commits
+        self.grouping_batch_size = 500
         
         # Statistics
         self.total_records = 0
@@ -54,6 +54,7 @@ class FastCSVImporter:
         self.matched_records = 0
         self.unmatched_records = 0
         self.skipped_records = 0
+        self.duplicate_records = 0
         
         # State
         self.cancel_requested = False
@@ -115,6 +116,52 @@ class FastCSVImporter:
         cleaned = cleaned.replace('(TEMP)', '').replace('(temp)', '')
         cleaned = ' '.join(cleaned.split())
         return cleaned.strip()
+
+    def normalize_mls_number(self, mls_number: str) -> str:
+        """Normalize MLS numbers for duplicate detection (trim spaces, uppercase)."""
+        if not mls_number:
+            return ""
+        collapsed = ' '.join(str(mls_number).split())
+        return collapsed.upper()
+
+    def fetch_existing_mls_numbers(self, trimmed_mls_values: List[str]) -> Set[str]:
+        """Load MLS numbers that already exist in the fileNumber table."""
+        unique_values = {value for value in trimmed_mls_values if value}
+        if not unique_values:
+            return set()
+
+        existing_numbers: Set[str] = set()
+        chunk_size = 500  # smaller chunks for better performance
+
+        try:
+            conn = self.db_connection.get_connection()
+            if conn is None:
+                raise RuntimeError("Database connection failed")
+
+            cursor = conn.cursor()
+            unique_list = list(unique_values)
+
+            for start in range(0, len(unique_list), chunk_size):
+                chunk = unique_list[start:start + chunk_size]
+                placeholders = ",".join(["?"] * len(chunk))
+                query = f"""
+                    SELECT LTRIM(RTRIM(mlsfNo)) AS trimmed_mls
+                    FROM [dbo].[fileNumber] WITH (NOLOCK)
+                    WHERE LTRIM(RTRIM(mlsfNo)) IN ({placeholders})
+                """
+                cursor.execute(query, tuple(chunk))
+                rows = cursor.fetchall()
+                for (trimmed_mls,) in rows:
+                    if trimmed_mls:
+                        existing_numbers.add(self.normalize_mls_number(trimmed_mls))
+
+        finally:
+            if 'cursor' in locals():
+                cursor.close()
+            if 'conn' in locals():
+                conn.close()
+
+        return existing_numbers
     
     def prefetch_grouping_lookup(self, cleaned_values: List[str]) -> None:
         """Bulk load grouping matches using indexed lookups."""
@@ -134,7 +181,7 @@ class FastCSVImporter:
         logger.info("Prefetching grouping matches for %d unique MLS numbers", total_candidates)
         self.emit_progress(f"Prefetching grouping data ({total_candidates} unique values)...")
         
-        chunk_size = 1000
+        chunk_size = 500  # smaller chunks for better performance
         total_matched = 0
         total_processed = 0
         
@@ -152,10 +199,10 @@ class FastCSVImporter:
                 chunk = values_to_lookup[start:start + chunk_size]
                 placeholders = ",".join(["?"] * len(chunk))
                 
-                # Use indexed lookup on awaiting_fileno
+                # Use indexed lookup on awaiting_fileno with NOLOCK
                 query = f"""
                     SELECT LTRIM(RTRIM(awaiting_fileno)) AS awaiting_trim, tracking_id
-                    FROM [dbo].[grouping]
+                    FROM [dbo].[grouping] WITH (NOLOCK)
                     WHERE LTRIM(RTRIM(awaiting_fileno)) IN ({placeholders})
                 """
                 
@@ -299,6 +346,7 @@ class FastCSVImporter:
         prepared_data = []
         current_time = datetime.now()
         unique_cleaned_values = set()
+        unique_trimmed_mls_values = set()
         
         # First pass: collect unique cleaned values for prefetch
         rows_to_process = []
@@ -311,9 +359,13 @@ class FastCSVImporter:
                     continue
                 
                 cleaned_mlsf_no = self.clean_mlsf_no(original_mlsf_no)
-                rows_to_process.append((index, row, original_mlsf_no, cleaned_mlsf_no))
+                trimmed_mlsf_no = ' '.join(original_mlsf_no.split())
+                normalized_mlsf_no = self.normalize_mls_number(original_mlsf_no)
+                rows_to_process.append((index, row, original_mlsf_no, cleaned_mlsf_no, trimmed_mlsf_no, normalized_mlsf_no))
                 if cleaned_mlsf_no:
                     unique_cleaned_values.add(cleaned_mlsf_no.strip())
+                if trimmed_mlsf_no:
+                    unique_trimmed_mls_values.add(trimmed_mlsf_no)
                     
             except Exception as e:
                 logger.error(f"Error preprocessing record at index {index}: {str(e)}")
@@ -334,18 +386,44 @@ class FastCSVImporter:
         
         if self.cancel_requested:
             raise ImportCancelledError()
+
+        # Fetch existing MLS numbers to prevent duplicates
+        self.set_progress_stage(20.0, 5.0)
+        self.emit_progress("Checking for existing MLS numbers...", 0.0)
+        existing_mls_numbers = self.fetch_existing_mls_numbers(list(unique_trimmed_mls_values))
+        if existing_mls_numbers:
+            logger.info("Detected %d MLS numbers already present in fileNumber; duplicates will be skipped", len(existing_mls_numbers))
+        self.emit_progress(f"Existing MLS numbers found: {len(existing_mls_numbers)}", 100.0)
         
         # Second pass: prepare records with tracking IDs
         self.set_progress_stage(25.0, 20.0)
         progress_interval = max(1, total_to_process // 20)
         processed_count = 0
+        seen_in_current_file: Set[str] = set()
         
         try:
-            for index, row, original_mlsf_no, cleaned_mlsf_no in rows_to_process:
+            for index, row, original_mlsf_no, cleaned_mlsf_no, trimmed_mlsf_no, normalized_mlsf_no in rows_to_process:
                 try:
                     if self.cancel_requested:
                         raise ImportCancelledError()
                     
+                    if not normalized_mlsf_no:
+                        logger.debug(f"Row {index}: Empty normalized MLS number, skipping")
+                        self.skipped_records += 1
+                        continue
+
+                    if normalized_mlsf_no in existing_mls_numbers:
+                        logger.info(f"Row {index}: MLS number '{original_mlsf_no}' already exists in database, skipping")
+                        self.duplicate_records += 1
+                        continue
+
+                    if normalized_mlsf_no in seen_in_current_file:
+                        logger.info(f"Row {index}: MLS number '{original_mlsf_no}' duplicated in current CSV, skipping")
+                        self.duplicate_records += 1
+                        continue
+
+                    seen_in_current_file.add(normalized_mlsf_no)
+
                     tracking_id = self.lookup_tracking_id(cleaned_mlsf_no)
                     
                     if tracking_id:
@@ -412,7 +490,7 @@ class FastCSVImporter:
         logger.info(f"Skipped records: {self.skipped_records}")
         
         self.emit_progress(
-            f"Prepared {len(prepared_data)} records (matched: {self.matched_records}, unmatched: {self.unmatched_records}, skipped: {self.skipped_records})",
+            f"Prepared {len(prepared_data)} records (matched: {self.matched_records}, unmatched: {self.unmatched_records}, skipped: {self.skipped_records}, duplicates: {self.duplicate_records})",
             100.0
         )
         
@@ -510,6 +588,16 @@ class FastCSVImporter:
         self.test_control_value = control_tag if control_tag else None
         self.start_time = datetime.now()
         self.cancel_requested = False
+        self.total_records = 0
+        self.processed_records = 0
+        self.inserted_records = 0
+        self.matched_records = 0
+        self.unmatched_records = 0
+        self.skipped_records = 0
+        self.duplicate_records = 0
+        self.grouping_lookup_cache.clear()
+        self.grouping_missing_values.clear()
+        self.grouping_updates.clear()
         
         logger.info("="*70)
         logger.info("Starting CSV import process...")
@@ -587,6 +675,7 @@ class FastCSVImporter:
             logger.info("="*70)
             logger.info(f"Total records read: {self.total_records}")
             logger.info(f"Skipped records: {self.skipped_records}")
+            logger.info(f"Duplicate records skipped: {self.duplicate_records}")
             logger.info(f"Records inserted: {total_inserted}")
             logger.info(f"Matched groupings: {self.matched_records}")
             logger.info(f"Unmatched groupings: {self.unmatched_records}")
@@ -595,7 +684,7 @@ class FastCSVImporter:
             logger.info("="*70)
             
             self.emit_progress(
-                f"✓ Import complete! {total_inserted} records inserted at {rate:.0f} rec/sec",
+                f"✓ Import complete! {total_inserted} records inserted at {rate:.0f} rec/sec (duplicates skipped: {self.duplicate_records})",
                 100.0
             )
             

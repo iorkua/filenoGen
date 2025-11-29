@@ -1,0 +1,18 @@
+[
+  {
+    "id": "915bfffa868d47d0b00aa01dcb140f51",
+    "original_name": "1.csv",
+    "stored_name": "20251120_071301_1348b615f17445d6a8b1e0b3f7a38023_1.csv",
+    "row_count": 1000,
+    "control_tag": "PROD",
+    "status": "running",
+    "created_at": "2025-11-20T07:13:01.429528",
+    "updated_at": "2025-11-20T07:13:01.434070",
+    "started_at": "2025-11-20T07:13:01.434038",
+    "finished_at": null,
+    "progress": 0.0,
+    "last_message": "Starting import...",
+    "stats": null,
+    "error": null
+  }
+]
